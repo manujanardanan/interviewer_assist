@@ -20,27 +20,43 @@ def create_pdf(details, questions, transcript, evaluation):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, f"Interview Report for: {details['name']}", 0, 1, 'C')
+    
+    # Sanitize candidate name before using it
+    sanitized_name = details['name'].encode('latin-1', 'replace').decode('latin-1')
+    pdf.cell(0, 10, f"Interview Report for: {sanitized_name}", 0, 1, 'C')
+    
     pdf.set_font("Arial", '', 12)
     pdf.cell(0, 10, f"Role Level: {details['role_level']} | Salary Expectation: {details['lpa']} LPA", 0, 1, 'C')
     pdf.ln(10)
+
     pdf.set_font("Arial", 'B', 12)
     pdf.multi_cell(0, 5, "Questions Asked During Interview:")
     pdf.set_font("Arial", '', 11)
     for i, q in enumerate(questions):
-        pdf.multi_cell(0, 5, f"{i+1}. {q}")
+        # Sanitize each question
+        sanitized_q = q.encode('latin-1', 'replace').decode('latin-1')
+        pdf.multi_cell(0, 5, f"{i+1}. {sanitized_q}")
     pdf.ln(5)
+
     pdf.set_font("Arial", 'B', 12)
     pdf.multi_cell(0, 5, "Full Interview Transcript:")
     pdf.set_font("Arial", 'I', 11)
-    pdf.multi_cell(0, 5, transcript)
+    # Sanitize the full transcript
+    sanitized_transcript = transcript.encode('latin-1', 'replace').decode('latin-1')
+    pdf.multi_cell(0, 5, sanitized_transcript)
     pdf.ln(5)
+
     pdf.set_font("Arial", 'B', 12)
     pdf.multi_cell(0, 5, "Overall Evaluation:")
     pdf.set_font("Arial", '', 11)
-    pdf.multi_cell(0, 5, evaluation.get('overall_summary', 'N/A'))
+    # Sanitize the evaluation summary
+    summary = evaluation.get('overall_summary', 'N/A')
+    sanitized_summary = summary.encode('latin-1', 'replace').decode('latin-1')
+    pdf.multi_cell(0, 5, sanitized_summary)
     pdf.ln(10)
-    return pdf.output(dest='S').encode('latin1')
+    
+    # The output encoding remains the same
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- Session State Initialization ---
 if 'status' not in st.session_state:
