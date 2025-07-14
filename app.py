@@ -54,10 +54,30 @@ def start_new_interview():
     st.rerun()
 
 def generate_question(role_level):
-    # This function remains the same
+    """Calls OpenAI to generate a single interview question."""
     try:
-        # ... (code for generating question, same as before)
-        response = client.chat.completions.create(...)
+        question_prompt = f"""
+        **Persona:**
+        You are an expert GenAI technical interviewer.
+
+        **Task:**
+        Based on the provided role level ('{role_level}'), generate ONE unique, situational interview question.
+
+        **Rules:**
+        - The question must be about a practical challenge in GenAI.
+        - For "Senior" roles, focus on architecture or strategy.
+        - For "Mid" roles, focus on development or problem-solving.
+        - Return ONLY the question text, without any preamble.
+        """
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
+                {"role": "user", "content": question_prompt}
+            ],
+            temperature=0.8,
+            max_tokens=200
+        )
         return response.choices[0].message.content
     except Exception as e:
         return f"Error: {e}"
