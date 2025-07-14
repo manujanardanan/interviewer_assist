@@ -94,6 +94,32 @@ def generate_question(role_level, question_number):
     if prompt:
         return get_ai_response(prompt)
     return "All questions have been asked."
+def suggest_question_callback():
+    """Callback to generate the next question."""
+    st.session_state.question_number += 1
+    with st.spinner("Generating..."):
+        new_question = generate_question(st.session_state.candidate_details['role_level'], st.session_state.question_number)
+        if new_question:
+            st.session_state.current_question = new_question
+            st.session_state.questions_asked.append(new_question)
+
+def rephrase_question_callback():
+    """Callback to rephrase the current question."""
+    if st.session_state.question_number > 0:
+        prompt = f"Rephrase the following interview question to be clearer or provide a different angle: '{st.session_state.current_question}'"
+        with st.spinner("Rephrasing..."):
+            rephrased_q = get_ai_response(prompt)
+            if rephrased_q:
+                st.session_state.current_question = rephrased_q
+                if st.session_state.questions_asked:
+                    st.session_state.questions_asked[-1] = rephrased_q
+
+def finish_interview_callback():
+    """Callback to finish the interview and move to evaluation."""
+    if st.session_state.audio_bytes:
+        st.session_state.status = 'evaluating'
+    else:
+        st.warning("Please record the interview audio before finishing.", icon="⚠️")
 
 # --- SCREEN 1: SETUP ---
 if st.session_state.status == 'setup':
@@ -110,7 +136,7 @@ if st.session_state.status == 'setup':
 # --- SCREEN 2: LIVE INTERVIEW ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info(f"**Instructions:** 1. Start recorder. 2. Conduct interview. 3. Stop recorder. 4. Click 'Finish Interview'.")
+    st.info(f"**Instructions:** 1. Start recorder. 2. Use question controls. 3. Stop recorder. 4. Click 'Finish Interview'.")
     
     col1, col2 = st.columns([2, 3])
 
@@ -119,36 +145,21 @@ elif st.session_state.status == 'live_interview':
         st.write("Click the microphone to start/stop recording.")
         audio_bytes = st_audiorec()
         
-        # When audio is recorded, save it to the session state
         if audio_bytes:
             st.session_state.audio_bytes = audio_bytes
+            st.text("Recording captured.")
 
-        # --- NEW FEATURE: Playback for Confirmation ---
-        # If audio has been recorded, show a player so the user knows it was successful.
         if st.session_state.audio_bytes:
-            st.subheader("Confirm Recorded Audio")
             st.audio(st.session_state.audio_bytes, format="audio/wav")
 
         st.subheader("Question Controls")
+        
         next_q_num = st.session_state.question_number + 1
         if next_q_num <= 3:
-            if st.button(f"Suggest Question {next_q_num}/3"):
-                st.session_state.question_number = next_q_num
-                with st.spinner("Generating..."):
-                    new_question = generate_question(st.session_state.candidate_details['role_level'], st.session_state.question_number)
-                    if new_question:
-                        st.session_state.current_question = new_question
-                        st.session_state.questions_asked.append(new_question)
+            st.button(f"Suggest Question {next_q_num}/3", on_click=suggest_question_callback)
         
         if st.session_state.question_number > 0:
-            if st.button("Rephrase Current Question"):
-                prompt = f"Rephrase the following interview question to be clearer: '{st.session_state.current_question}'"
-                with st.spinner("Rephrasing..."):
-                    rephrased_q = get_ai_response(prompt)
-                    if rephrased_q:
-                        st.session_state.current_question = rephrased_q
-                        if st.session_state.questions_asked:
-                            st.session_state.questions_asked[-1] = rephrased_q
+            st.button("Rephrase Current Question", on_click=rephrase_question_callback)
 
     with col2:
         st.subheader("Current Question & Notes")
@@ -157,15 +168,8 @@ elif st.session_state.status == 'live_interview':
         
     st.markdown("---")
     
-    # --- THIS IS THE CORRECTED BUTTON LOGIC ---
-    # The button is now always enabled. The logic to check for audio is moved inside.
-    if st.button("Finish Interview & Evaluate", type="primary"):
-        if st.session_state.audio_bytes:
-            st.session_state.status = 'evaluating'
-            st.rerun()
-        else:
-            # If no audio is recorded, show a warning message.
-            st.warning("Please record the interview audio before finishing.", icon="⚠️")
+    st.button("Finish Interview & Evaluate", type="primary", on_click=finish_interview_callback)
+
             
 # --- SCREEN 3: EVALUATION & REPORT ---
 elif st.session_state.status in ['evaluating', 'report']:
