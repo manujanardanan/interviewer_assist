@@ -114,13 +114,6 @@ def rephrase_question_callback():
                 if st.session_state.questions_asked:
                     st.session_state.questions_asked[-1] = rephrased_q
 
-def finish_interview_callback():
-    """Callback to finish the interview and move to evaluation."""
-    if st.session_state.audio_bytes:
-        st.session_state.status = 'evaluating'
-    else:
-        st.warning("Please record the interview audio before finishing.", icon="⚠️")
-
 # --- SCREEN 1: SETUP ---
 if st.session_state.status == 'setup':
     st.header("Stage 1: Candidate Details")
@@ -136,27 +129,18 @@ if st.session_state.status == 'setup':
 # --- SCREEN 2: LIVE INTERVIEW ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info(f"**Instructions:** 1. Start recorder. 2. Use question controls. 3. Stop recorder. 4. Click 'Finish Interview'.")
     
+    # --- Part 1: Question and Answer Phase ---
+    st.subheader("1. Question & Answer Phase")
+    st.markdown("Use the controls below to generate questions and take notes.")
+
     col1, col2 = st.columns([2, 3])
 
     with col1:
-        st.subheader("Interview Recorder")
-        st.write("Click the microphone to start/stop recording.")
-        audio_bytes = st_audiorec()
-        
-        if audio_bytes:
-            st.session_state.audio_bytes = audio_bytes
-            st.text("Recording captured.")
-
-        if st.session_state.audio_bytes:
-            st.audio(st.session_state.audio_bytes, format="audio/wav")
-
         st.subheader("Question Controls")
-        
         next_q_num = st.session_state.question_number + 1
         if next_q_num <= 3:
-            st.button(f"Suggest Question {next_q_num}/3", on_click=suggest_question_callback)
+            st.button(f"Suggest Question {next_q_num}/3", on_click=suggest_question_callback, key=f"q{next_q_num}")
         
         if st.session_state.question_number > 0:
             st.button("Rephrase Current Question", on_click=rephrase_question_callback)
@@ -164,12 +148,31 @@ elif st.session_state.status == 'live_interview':
     with col2:
         st.subheader("Current Question & Notes")
         st.markdown(f"> **{st.session_state.current_question}**")
-        st.session_state.notes = st.text_area("Interviewer's Notes:", height=350, value=st.session_state.notes)
-        
-    st.markdown("---")
-    
-    st.button("Finish Interview & Evaluate", type="primary", on_click=finish_interview_callback)
+        st.session_state.notes = st.text_area("Interviewer's Notes:", height=200, value=st.session_state.notes)
 
+    st.markdown("---")
+
+    # --- Part 2: Recording Phase ---
+    st.subheader("2. Recording Phase")
+    st.info("After completing the Q&A, use the recorder below to capture the full interview audio.")
+    
+    audio_bytes = st_audiorec()
+    if audio_bytes:
+        st.session_state.audio_bytes = audio_bytes
+        st.audio(audio_bytes, format="audio/wav")
+
+    st.markdown("---")
+
+    # --- Part 3: Finish Interview ---
+    st.subheader("3. Complete the Interview")
+    
+    # This button uses a reliable 'if' block instead of a callback
+    if st.button("Finish Interview & Evaluate", type="primary"):
+        if st.session_state.audio_bytes:
+            st.session_state.status = 'evaluating'
+            st.rerun()
+        else:
+            st.warning("Please record the interview audio before finishing.", icon="⚠️")
             
 # --- SCREEN 3: EVALUATION & REPORT ---
 elif st.session_state.status in ['evaluating', 'report']:
