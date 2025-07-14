@@ -89,7 +89,7 @@ if st.session_state.status == 'setup':
 # --- SCREEN 2: LIVE INTERVIEW ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info("Instructions: Start recorder, conduct interview, stop recorder, then click 'Finish Interview'.")
+    st.info(f"**Instructions:** Start the recorder, use the question controls, and stop the recorder when done.")
     
     col1, col2 = st.columns([2, 3])
 
@@ -98,25 +98,34 @@ elif st.session_state.status == 'live_interview':
         st.write("Click the microphone to start/stop recording.")
         audio_bytes = st_audiorec()
         
-        # --- THIS IS THE CORRECTED PART ---
-        # If the recorder returns audio and we haven't already saved it,
-        # save it and force a rerun to update the button state reliably.
+        # This logic correctly saves the audio and forces a rerun
         if audio_bytes and not st.session_state.audio_bytes:
             st.session_state.audio_bytes = audio_bytes
             st.rerun()
 
         st.subheader("Question Controls")
+        
+        # --- THIS IS THE RESTORED LOGIC ---
         next_q_num = st.session_state.question_number + 1
         if next_q_num <= 3:
             if st.button(f"Suggest Question {next_q_num}/3"):
-                # ... (question generation logic is unchanged)
                 st.session_state.question_number = next_q_num
-                # ...
+                with st.spinner("Generating..."):
+                    new_question = generate_question(st.session_state.candidate_details['role_level'], st.session_state.question_number)
+                    if new_question:
+                        st.session_state.current_question = new_question
+                        st.session_state.questions_asked.append(new_question)
         
         if st.session_state.question_number > 0:
             if st.button("Rephrase Current Question"):
-                # ... (rephrase logic is unchanged)
-                pass
+                prompt = f"Rephrase the following interview question to be clearer or provide a different angle: '{st.session_state.current_question}'"
+                with st.spinner("Rephrasing..."):
+                    rephrased_q = get_ai_response(prompt)
+                    if rephrased_q:
+                        st.session_state.current_question = rephrased_q
+                        if st.session_state.questions_asked:
+                            st.session_state.questions_asked[-1] = rephrased_q
+        # --- END OF RESTORED LOGIC ---
 
     with col2:
         st.subheader("Current Question & Notes")
@@ -125,8 +134,7 @@ elif st.session_state.status == 'live_interview':
         
     st.markdown("---")
     
-    # This button logic is now robust. It checks the session state
-    # which is reliably updated by the rerun logic above.
+    # This button logic is correct and relies on the state update above
     if st.button("Finish Interview & Evaluate", type="primary", disabled=(not st.session_state.audio_bytes)):
         st.session_state.status = 'evaluating'
         st.rerun()
