@@ -1,4 +1,4 @@
 streamlit
 openai
-st-audiorec
+streamlit-audiorec
 fpdf2
