@@ -110,7 +110,7 @@ if st.session_state.status == 'setup':
 # --- SCREEN 2: LIVE INTERVIEW ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info(f"**Instructions:** Start recorder, use question controls, stop recorder, then click 'Finish Interview'.")
+    st.info(f"**Instructions:** 1. Start recorder. 2. Conduct interview. 3. Stop recorder. 4. Click 'Finish Interview'.")
     
     col1, col2 = st.columns([2, 3])
 
@@ -119,9 +119,15 @@ elif st.session_state.status == 'live_interview':
         st.write("Click the microphone to start/stop recording.")
         audio_bytes = st_audiorec()
         
-        if audio_bytes and not st.session_state.audio_bytes:
+        # When audio is recorded, save it to the session state
+        if audio_bytes:
             st.session_state.audio_bytes = audio_bytes
-            st.rerun()
+
+        # --- NEW FEATURE: Playback for Confirmation ---
+        # If audio has been recorded, show a player so the user knows it was successful.
+        if st.session_state.audio_bytes:
+            st.subheader("Confirm Recorded Audio")
+            st.audio(st.session_state.audio_bytes, format="audio/wav")
 
         st.subheader("Question Controls")
         next_q_num = st.session_state.question_number + 1
@@ -136,7 +142,7 @@ elif st.session_state.status == 'live_interview':
         
         if st.session_state.question_number > 0:
             if st.button("Rephrase Current Question"):
-                prompt = f"Rephrase the following interview question to be clearer or provide a different angle: '{st.session_state.current_question}'"
+                prompt = f"Rephrase the following interview question to be clearer: '{st.session_state.current_question}'"
                 with st.spinner("Rephrasing..."):
                     rephrased_q = get_ai_response(prompt)
                     if rephrased_q:
@@ -151,10 +157,16 @@ elif st.session_state.status == 'live_interview':
         
     st.markdown("---")
     
-    if st.button("Finish Interview & Evaluate", type="primary", disabled=(not st.session_state.audio_bytes)):
-        st.session_state.status = 'evaluating'
-        st.rerun()
-
+    # --- THIS IS THE CORRECTED BUTTON LOGIC ---
+    # The button is now always enabled. The logic to check for audio is moved inside.
+    if st.button("Finish Interview & Evaluate", type="primary"):
+        if st.session_state.audio_bytes:
+            st.session_state.status = 'evaluating'
+            st.rerun()
+        else:
+            # If no audio is recorded, show a warning message.
+            st.warning("Please record the interview audio before finishing.", icon="⚠️")
+            
 # --- SCREEN 3: EVALUATION & REPORT ---
 elif st.session_state.status in ['evaluating', 'report']:
     st.header(f"Stage 3: Evaluation & Final Report")
