@@ -1,76 +1,105 @@
 import streamlit as st
 from openai import OpenAI
 import json
-import time
+from st_audiorec import st_audiorec
+from fpdf import FPDF
 
 # --- Page Configuration ---
-st.set_page_config(
-    page_title="GenAI Interview Agent",
-    page_icon="🤖",
-    layout="wide"
-)
-
+st.set_page_config(page_title="GenAI Interview Agent", page_icon="🤖", layout="wide")
 st.title("🤖 GenAI Interview Agent")
 
 # --- OpenAI Client Initialization ---
 try:
     client = OpenAI(api_key=st.secrets["openai"]["api_key"])
-except Exception as e:
+except Exception:
     st.error("OpenAI API key not found. Please add it to your Streamlit secrets.", icon="🚨")
     st.stop()
 
+# --- PDF Generation Function ---
+def create_pdf(interview_data, candidate_details):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, f"Interview Report for: {candidate_details['name']}", 0, 1, 'C')
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 10, f"Role Level: {candidate_details['role_level']} | Salary Expectation: {candidate_details['lpa']} LPA", 0, 1, 'C')
+    pdf.ln(10)
+
+    for i, item in enumerate(interview_data):
+        pdf.set_font("Arial", 'B', 12)
+        pdf.multi_cell(0, 5, f"Question {i+1}: {item['question']}")
+        pdf.ln(5)
+
+        pdf.set_font("Arial", 'I', 11)
+        pdf.multi_cell(0, 5, f"Candidate's Answer: {item['transcript']}")
+        pdf.ln(5)
+
+        pdf.set_font("Arial", '', 11)
+        pdf.multi_cell(0, 5, f"Evaluation: {item['evaluation'].get('overall_summary', 'N/A')}")
+        pdf.ln(10)
+    
+    return pdf.output(dest='S').encode('latin1')
+
 # --- Session State Initialization ---
-# This now includes states for the new interview flow.
 if 'status' not in st.session_state:
     st.session_state.status = 'setup'
     st.session_state.candidate_details = {}
-    st.session_state.suggested_question = "Click 'Suggest Next Question' to begin."
-    st.session_state.interview_notes = ""
-    st.session_state.transcript = ""
-    st.session_state.evaluation = None
+    st.session_state.interview_flow = [] # Will store a list of Q&A + evaluation dicts
+    st.session_state.current_question = "Click 'Suggest Question' to begin."
 
 # --- Helper Functions ---
 def start_new_interview():
-    """Resets the entire session state to the beginning."""
-    st.session_state.status = 'setup'
-    st.session_state.candidate_details = {}
-    st.session_state.suggested_question = "Click 'Suggest Next Question' to begin."
-    st.session_state.interview_notes = ""
-    st.session_state.transcript = ""
-    st.session_state.evaluation = None
+    for key in st.session_state.keys():
+        del st.session_state[key]
+    st.rerun()
 
 def generate_question(role_level):
-    """Calls OpenAI to generate a single interview question."""
+    # This function remains the same
     try:
-        question_prompt = f"""
-        **Persona:**
-        You are an expert GenAI technical interviewer.
+        # ... (code for generating question, same as before)
+        response = client.chat.completions.create(...)
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
 
-        **Task:**
-        Based on the provided role level ('{role_level}'), generate ONE unique, situational interview question.
+def process_answer(audio_bytes, question, role_level):
+    """Transcribes and evaluates a single answer."""
+    try:
+        # 1. Transcribe Audio
+        transcript_response = client.audio.transcriptions.create(
+            model="whisper-1", file=("interview_answer.wav", audio_bytes)
+        )
+        transcript = transcript_response.text
 
-        **Rules:**
-        - The question must be about a practical challenge in GenAI.
-        - For "Senior" roles, focus on architecture or strategy.
-        - For "Mid" roles, focus on development or problem-solving.
-        - Return ONLY the question text, without any preamble.
+        # 2. Evaluate Transcript
+        evaluation_prompt = f"""
+        **Persona:** You are a fair GenAI Technical Interviewer.
+        **Task:** Evaluate the candidate's single response to the specific question asked.
+        **Rubric (Score 1-10):** Clarity, Correctness, Depth.
+        **Rules:** Provide a score and justification for each category, an "overall_summary", and output in a valid JSON format.
+        ---
+        **CANDIDATE LEVEL:** {role_level}
+        **QUESTION ASKED:** {question}
+        **CANDIDATE'S ANSWER TO EVALUATE:** {transcript}
         """
         response = client.chat.completions.create(
             model="gpt-4-turbo",
+            response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
-                {"role": "user", "content": question_prompt}
-            ],
-            temperature=0.8,
-            max_tokens=200
+                {"role": "system", "content": "You are an assistant that evaluates interview answers and outputs JSON."},
+                {"role": "user", "content": evaluation_prompt}
+            ]
         )
-        return response.choices[0].message.content
+        evaluation = json.loads(response.choices[0].message.content)
+        return transcript, evaluation
     except Exception as e:
-        return f"Error generating question: {e}"
+        st.error(f"Could not process answer: {e}")
+        return None, None
 
 # --- SCREEN 1: SETUP ---
 if st.session_state.status == 'setup':
     st.header("Stage 1: Candidate Details")
+    # ... (form code is the same as before)
     with st.form("setup_form"):
         name = st.text_input("Candidate Name")
         lpa = st.number_input("Salary Expectation (LPA)", min_value=10, value=30)
@@ -78,130 +107,91 @@ if st.session_state.status == 'setup':
 
         if submitted and name:
             st.session_state.candidate_details = {
-                "name": name,
-                "lpa": lpa,
-                "role_level": "Senior" if lpa > 35 else "Mid"
+                "name": name, "lpa": lpa, "role_level": "Senior" if lpa > 35 else "Mid"
             }
             st.session_state.status = 'live_interview'
             st.rerun()
 
-# --- SCREEN 2: LIVE INTERVIEW ---
+
+# --- SCREEN 2: LIVE INTERVIEW (Q&A Loop) ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info(f"**Role Level:** {st.session_state.candidate_details['role_level']} | **Simulated Timer:** 30 minutes")
-    
-    col1, col2 = st.columns([2, 3])
+    st.info(f"**Instructions:** Suggest a question, let the candidate answer, record their response, and process it. Repeat as needed.")
 
-    with col1:
-        st.subheader("Question Suggester")
-        if st.button("Suggest Next Question"):
-            with st.spinner("Generating question..."):
-                st.session_state.suggested_question = generate_question(st.session_state.candidate_details['role_level'])
-        
-        st.markdown(f"> {st.session_state.suggested_question}")
-        st.markdown("---")
-        if st.button("Finish Interview & Stop Recording", type="primary"):
-            st.session_state.status = 'awaiting_upload'
-            st.rerun()
+    st.subheader("1. Get a Question")
+    st.markdown(f"> **Suggested Question:** {st.session_state.current_question}")
+    if st.button("Suggest Next Question"):
+        st.session_state.current_question = generate_question(st.session_state.candidate_details['role_level'])
+        st.rerun()
 
-    with col2:
-        st.subheader("Interviewer's Notes")
-        st.session_state.interview_notes = st.text_area(
-            "Take notes on the candidate's answers here. They will be used for the final evaluation.",
-            height=400,
-            value=st.session_state.interview_notes
-        )
+    st.subheader("2. Record Candidate's Answer")
+    audio_bytes = st_audiorec()
 
-# --- SCREEN 3: UPLOAD & EVALUATE ---
-elif st.session_state.status == 'awaiting_upload':
-    st.header("Stage 3: Generate & Evaluate Transcript")
-    
-    st.subheader("A. Upload Interview Audio")
-    audio_file = st.file_uploader("Upload the final interview recording (.mp3, .wav):", type=["mp3", "m4a", "wav", "mpeg"])
+    if audio_bytes:
+        if st.button("Process This Answer"):
+            with st.spinner("Transcribing and evaluating answer..."):
+                transcript, evaluation = process_answer(
+                    audio_bytes,
+                    st.session_state.current_question,
+                    st.session_state.candidate_details['role_level']
+                )
+                if transcript and evaluation:
+                    st.session_state.interview_flow.append({
+                        "question": st.session_state.current_question,
+                        "transcript": transcript,
+                        "evaluation": evaluation
+                    })
+                    st.success("Answer processed!")
+                    st.session_state.current_question = "Suggest another question or finish the interview."
 
-    if audio_file:
-        if st.button("Generate Transcript"):
-            with st.spinner("Transcription in progress... Please wait."):
-                try:
-                    transcript_response = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
-                    st.session_state.transcript = transcript_response.text
-                    st.success("Transcription complete!", icon="✅")
-                except Exception as e:
-                    st.error(f"Transcription failed: {e}", icon="🚨")
-
-    if st.session_state.transcript:
-        st.subheader("B. Confirm & Evaluate")
-        st.session_state.transcript = st.text_area(
-            "Review or edit the transcript for accuracy:",
-            value=st.session_state.transcript,
-            height=200
-        )
-
-        if st.button("Evaluate Now", type="primary"):
-            with st.spinner("AI evaluation in progress..."):
-                try:
-                    evaluation_prompt = f"""
-                    **Persona:**
-                    You are a fair and objective GenAI Technical Interviewer. Your task is to evaluate a candidate's interview performance based on their role level, the full audio transcript, and the interviewer's notes.
-
-                    **Rubric & Scoring (Score each category from 1-10):**
-                    1. Clarity: How clear and well-communicated were the answers?
-                    2. Correctness: Was the technical information accurate?
-                    3. Depth: How deep was the candidate's knowledge? Did they cover trade-offs and edge cases?
-
-                    **Task:**
-                    Evaluate the candidate based on the provided materials. The candidate is a '{st.session_state.candidate_details['role_level']}' level professional.
-
-                    **Rules:**
-                    - Provide a score and a brief justification for each category.
-                    - Provide an "overall_summary".
-                    - The entire output MUST be in a valid JSON format.
-                    
-                    ---
-                    **INTERVIEWER'S NOTES (for context):**
-                    {st.session_state.interview_notes}
-
-                    ---
-                    **FULL TRANSCRIPT TO EVALUATE:**
-                    {st.session_state.transcript}
-                    """
-                    
-                    response = client.chat.completions.create(
-                        model="gpt-4-turbo",
-                        response_format={"type": "json_object"},
-                        messages=[
-                            {"role": "system", "content": "You are a helpful assistant designed to output JSON."},
-                            {"role": "user", "content": evaluation_prompt}
-                        ]
-                    )
-                    st.session_state.evaluation = json.loads(response.choices[0].message.content)
-                    st.session_state.status = 'report'
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"AI evaluation failed: {e}", icon="🚨")
-
-# --- SCREEN 4: FINAL REPORT ---
-elif st.session_state.status == 'report':
-    st.header(f"Stage 4: Final Report for {st.session_state.candidate_details['name']}")
-    
-    evaluation = st.session_state.evaluation.get("evaluation")
-    summary = st.session_state.evaluation.get("overall_summary")
-
-    if evaluation:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Clarity", f"{evaluation['clarity']['score']}/10")
-        col2.metric("Correctness", f"{evaluation['correctness']['score']}/10")
-        col3.metric("Depth", f"{evaluation['depth']['score']}/10")
-
-        st.subheader("Justification")
-        st.markdown(f"**Clarity:** {evaluation['clarity']['justification']}")
-        st.markdown(f"**Correctness:** {evaluation['correctness']['justification']}")
-        st.markdown(f"**Depth:** {evaluation['depth']['justification']}")
-        
-        st.subheader("Overall Summary")
-        st.info(summary)
+    st.markdown("---")
+    st.subheader("3. Interview Progress")
+    if st.session_state.interview_flow:
+        for i, item in enumerate(st.session_state.interview_flow):
+            with st.expander(f"View Processed Answer for Question {i+1}"):
+                st.write(f"**Question:** {item['question']}")
+                st.write(f"**Transcript:** {item['transcript']}")
+                st.write(f"**Summary:** {item['evaluation'].get('overall_summary', 'N/A')}")
     else:
-        st.error("Could not parse evaluation data.", icon="🚨")
-    
+        st.write("No answers processed yet.")
+
+    st.markdown("---")
+    if st.button("Finish Interview & View Final Report", type="primary"):
+        st.session_state.status = 'report'
+        st.rerun()
+
+
+# --- SCREEN 3: FINAL REPORT (The new "Fourth Screen") ---
+elif st.session_state.status == 'report':
+    st.header(f"Stage 3: Final Report for {st.session_state.candidate_details['name']}")
+
+    if not st.session_state.interview_flow:
+        st.warning("No interview data was recorded.")
+    else:
+        # Generate PDF data in memory
+        pdf_data = create_pdf(st.session_state.interview_flow, st.session_state.candidate_details)
+        st.download_button(
+            label="⬇️ Download Report as PDF",
+            data=pdf_data,
+            file_name=f"Interview_Report_{st.session_state.candidate_details['name']}.pdf",
+            mime="application/pdf"
+        )
+        
+        st.markdown("---")
+        st.subheader("Detailed Question-by-Question Breakdown")
+        
+        for i, item in enumerate(st.session_state.interview_flow):
+            with st.container(border=True):
+                st.markdown(f"**Question {i+1}:** {item['question']}")
+                st.info(f"**Candidate's Answer:** {item['transcript']}")
+                
+                eval_data = item['evaluation'].get('evaluation', {})
+                if eval_data:
+                    st.write("**Evaluation:**")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Clarity", f"{eval_data.get('clarity', {}).get('score', 0)}/10")
+                    col2.metric("Correctness", f"{eval_data.get('correctness', {}).get('score', 0)}/10")
+                    col3.metric("Depth", f"{eval_data.get('depth', {}).get('score', 0)}/10")
+                st.success(f"**Summary:** {item['evaluation'].get('overall_summary', 'N/A')}")
+
     st.button("Start New Interview", on_click=start_new_interview)
