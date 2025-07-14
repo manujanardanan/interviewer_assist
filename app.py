@@ -1,171 +1,147 @@
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, firestore, storage
-import requests
+from openai import OpenAI
 import json
-import random
-import time
 
-# --- Firebase Initialization ---
-# This function initializes the Firebase app, using credentials from Streamlit secrets.
-# It checks if the app is already initialized to avoid errors.
+# --- Page Configuration ---
+st.set_page_config(
+    page_title="GenAI Interview Agent",
+    page_icon="🤖",
+    layout="wide"
+)
 
-def initialize_firebase():
-    if not firebase_admin._apps:
-        # Load credentials from st.secrets
-        # Ensure your secrets.toml file is configured correctly
-        creds_json = {
-            "type": st.secrets["firebase"]["type"],
-            "project_id": st.secrets["firebase"]["project_id"],
-            "private_key_id": st.secrets["firebase"]["private_key_id"],
-            "private_key": st.secrets["firebase"]["private_key"].replace('\\n', '\n'),
-            "client_email": st.secrets["firebase"]["client_email"],
-            "client_id": st.secrets["firebase"]["client_id"],
-            "auth_uri": st.secrets["firebase"]["auth_uri"],
-            "token_uri": st.secrets["firebase"]["token_uri"],
-            "auth_provider_x509_cert_url": st.secrets["firebase"]["auth_provider_x509_cert_url"],
-            "client_x509_cert_url": st.secrets["firebase"]["client_x509_cert_url"]
-        }
-        creds = credentials.Certificate(creds_json)
-        firebase_admin.initialize_app(creds, {
-            'storageBucket': f"{st.secrets['firebase']['project_id']}.appspot.com"
-        })
-    return firestore.client()
+st.title("🤖 GenAI Interview Agent (All-in-One)")
 
-# --- Main App Logic ---
+# --- OpenAI Client Initialization ---
+# The API key is securely stored in Streamlit's secrets management.
+try:
+    client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+except Exception as e:
+    st.error("OpenAI API key not found. Please add it to your Streamlit secrets.", icon="🚨")
+    st.stop()
 
-st.set_page_config(layout="wide")
-st.title("🤖 GenAI Interview Agent")
-
-# Initialize Firebase and Firestore client
-db = initialize_firebase()
-
-# Initialize session state to manage the interview flow
+# --- Session State Initialization ---
+# This dictionary holds the application's state and persists across reruns.
 if 'status' not in st.session_state:
-    st.session_state.status = 'not_started'
-if 'interview_id' not in st.session_state:
-    st.session_state.interview_id = None
-if 'suggested_question' not in st.session_state:
-    st.session_state.suggested_question = "Click 'Suggest Question' to begin."
+    st.session_state.status = 'setup'
+    st.session_state.candidate_details = {}
+    st.session_state.transcript = ""
+    st.session_state.evaluation = None
 
-# --- SCREEN 1: Pre-Interview Setup ---
-if st.session_state.status == 'not_started':
-    st.header("1. Pre-Interview Setup")
-    
-    candidate_name = st.text_input("Candidate Name")
-    salary_lpa = st.number_input("Candidate Salary Expectation (LPA)", min_value=10, max_value=100, value=30)
+# --- Helper Function to Reset ---
+def start_new_interview():
+    """Resets the session state to the beginning."""
+    st.session_state.status = 'setup'
+    st.session_state.candidate_details = {}
+    st.session_state.transcript = ""
+    st.session_state.evaluation = None
 
-    if st.button("Start Interview", disabled=(not candidate_name)):
-        # Determine role level based on salary
-        role_level = "Senior" if salary_lpa > 35 else "Mid"
-        
-        # Create a new interview document in Firestore
-        doc_ref = db.collection("interviews").document()
-        doc_ref.set({
-            "candidateName": candidate_name,
-            "salaryLPA": salary_lpa,
-            "roleLevel": role_level,
-            "status": "in_progress",
-            "timestamp": firestore.SERVER_TIMESTAMP
-        })
-        
-        # Update session state to move to the next screen
-        st.session_state.interview_id = doc_ref.id
-        st.session_state.status = 'in_progress'
-        st.rerun()
 
-# --- SCREEN 2: Live Interview Assistance ---
-elif st.session_state.status == 'in_progress':
-    st.header(f"2. Live Interview Assistance")
-    st.info(f"**Interview in Progress for:** `{st.session_state.interview_id}`")
+# --- SCREEN 1: SETUP ---
+if st.session_state.status == 'setup':
+    st.header("1. Candidate Details")
+    with st.form("setup_form"):
+        name = st.text_input("Candidate Name")
+        lpa = st.number_input("Salary Expectation (LPA)", min_value=10, value=30)
+        submitted = st.form_submit_button("Start Interview")
 
-    col1, col2 = st.columns(2)
+        if submitted and name:
+            st.session_state.candidate_details = {
+                "name": name,
+                "lpa": lpa,
+                "role_level": "Senior" if lpa > 35 else "Mid"
+            }
+            st.session_state.status = 'interview'
+            st.rerun()
+        elif submitted and not name:
+            st.warning("Please enter the candidate's name.", icon="⚠️")
 
-    with col1:
-        st.subheader("Question Suggester")
-        if st.button("Suggest Question"):
-            # Fetch a random question from the 'questions' collection
-            questions_ref = db.collection("questions").stream()
-            questions = [doc.to_dict().get("text") for doc in questions_ref]
-            st.session_state.suggested_question = random.choice(questions) if questions else "No questions found in database."
-        
-        st.markdown(f"> {st.session_state.suggested_question}")
-    
-    with col2:
-        st.subheader("Upload Interview Audio")
-        audio_file = st.file_uploader(
-            "Upload the interview recording (.mp3) when complete:", 
-            type=["mp3"]
+# --- SCREEN 2: INTERVIEW & EVALUATION ---
+elif st.session_state.status == 'interview':
+    st.header(f"2. Interview with {st.session_state.candidate_details['name']}")
+    st.info(f"**Role Level:** {st.session_state.candidate_details['role_level']} | **LPA:** {st.session_state.candidate_details['lpa']}")
+
+    st.subheader("A. Transcribe Audio")
+    audio_file = st.file_uploader("Upload interview audio recording (.mp3, .wav):", type=["mp3", "m4a", "wav", "mpeg"])
+
+    if audio_file:
+        if st.button("Transcribe Audio"):
+            with st.spinner("Transcription in progress... Please wait."):
+                try:
+                    transcript_response = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file
+                    )
+                    st.session_state.transcript = transcript_response.text
+                    st.success("Transcription complete!", icon="✅")
+                except Exception as e:
+                    st.error(f"Transcription failed: {e}", icon="🚨")
+
+    if st.session_state.transcript:
+        st.subheader("B. Review and Evaluate")
+        st.session_state.transcript = st.text_area(
+            "Review or edit the transcript for accuracy:",
+            value=st.session_state.transcript,
+            height=300
         )
 
-        if audio_file is not None:
-            with st.spinner("Uploading and processing audio... This may take a few minutes."):
-                # Upload to Firebase Storage
-                bucket = storage.bucket()
-                blob = bucket.blob(f"interviews/{st.session_state.interview_id}/audio.mp3")
-                blob.upload_from_file(audio_file)
-                
-                # Update status and wait for transcription
-                db.collection("interviews").document(st.session_state.interview_id).update({"status": "processing_audio"})
-                st.session_state.status = 'awaiting_confirmation'
-                st.success("Audio uploaded! Awaiting transcription.")
-                st.info("The page will auto-refresh to check for the transcript.")
-                time.sleep(5) # Give a moment for the user to see the message
-                st.rerun()
+        if st.button("Evaluate Transcript", type="primary"):
+            with st.spinner("AI evaluation in progress..."):
+                try:
+                    # This is the prompt we designed earlier, now inside the code.
+                    evaluation_prompt = f"""
+                    **Persona:**
+                    You are a fair and objective GenAI Technical Interviewer. Your task is to evaluate a candidate's response based on their role level and the provided transcript.
 
+                    **Rubric & Scoring (Score each category from 1-10):**
+                    1. Clarity: How clear and well-communicated were the answers?
+                    2. Correctness: Was the technical information accurate?
+                    3. Depth: How deep was the candidate's knowledge? Did they cover trade-offs and edge cases?
 
-# --- SCREEN 3: Transcript Confirmation ---
-elif st.session_state.status == 'awaiting_confirmation':
-    st.header("3. Transcript Confirmation")
-    
-    # Check Firestore for the transcript
-    doc_ref = db.collection("interviews").document(st.session_state.interview_id)
-    interview_doc = doc_ref.get()
-    transcript = interview_doc.get("raw_transcript")
+                    **Task:**
+                    Evaluate the candidate's transcript using the rubric. The candidate is a '{st.session_state.candidate_details['role_level']}' level professional.
 
-    if transcript:
-        st.info("Please review and edit the transcript below for accuracy before evaluation.")
-        confirmed_transcript = st.text_area("Confirmed Transcript", value=transcript, height=400)
-        
-        if st.button("Confirm & Evaluate Transcript"):
-            with st.spinner("Submitting for evaluation..."):
-                # Call the evaluation Cloud Function
-                # IMPORTANT: Replace with your actual Cloud Function URL
-                EVALUATION_FUNCTION_URL = st.secrets["firebase"]["evaluation_function_url"]
-                
-                response = requests.post(
-                    EVALUATION_FUNCTION_URL,
-                    json={
-                        "interviewId": st.session_state.interview_id,
-                        "confirmedTranscript": confirmed_transcript,
-                        "questionAsked": "Please evaluate the candidate's overall performance based on the transcript." # Generic question for now
-                    }
-                )
-                
-                if response.status_code == 200:
-                    st.success("Evaluation complete!")
-                    st.session_state.status = 'complete'
+                    **Rules:**
+                    - Provide a score and a brief justification for each category.
+                    - Provide an "overall_summary".
+                    - The entire output MUST be in a valid JSON format like the example below.
+
+                    **JSON Output Example:**
+                    {{
+                      "evaluation": {{
+                        "clarity": {{"score": 8, "justification": "Clear and concise."}},
+                        "correctness": {{"score": 9, "justification": "Technically accurate."}},
+                        "depth": {{"score": 6, "justification": "Lacked depth on topic X."}}
+                      }},
+                      "overall_summary": "Solid candidate with good fundamentals."
+                    }}
+                    
+                    ---
+                    **Transcript to Evaluate:**
+                    {st.session_state.transcript}
+                    """
+                    
+                    response = client.chat.completions.create(
+                        model="gpt-4-turbo",
+                        response_format={"type": "json_object"},
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant designed to output JSON."},
+                            {"role": "user", "content": evaluation_prompt}
+                        ]
+                    )
+                    st.session_state.evaluation = json.loads(response.choices[0].message.content)
+                    st.session_state.status = 'report'
                     st.rerun()
-                else:
-                    st.error(f"Evaluation failed: {response.text}")
 
-    else:
-        st.info("Transcription is in progress. The page will automatically refresh every 20 seconds.")
-        time.sleep(20)
-        st.rerun()
+                except Exception as e:
+                    st.error(f"AI evaluation failed: {e}", icon="🚨")
 
-
-# --- SCREEN 4: Final Report ---
-elif st.session_state.status == 'complete':
-    st.header("4. Final Report")
+# --- SCREEN 3: FINAL REPORT ---
+elif st.session_state.status == 'report':
+    st.header(f"3. Final Report for {st.session_state.candidate_details['name']}")
     
-    doc_ref = db.collection("interviews").document(st.session_state.interview_id)
-    interview_doc = doc_ref.get().to_dict()
+    evaluation = st.session_state.evaluation.get("evaluation")
+    summary = st.session_state.evaluation.get("overall_summary")
 
-    st.subheader(f"Evaluation for: {interview_doc.get('candidateName')}")
-    st.write(f"**Role Level:** {interview_doc.get('roleLevel')} | **Salary Expectation:** {interview_doc.get('salaryLPA')} LPA")
-    
-    evaluation = interview_doc.get("evaluation", {}).get("evaluation", {})
     if evaluation:
         col1, col2, col3 = st.columns(3)
         col1.metric("Clarity", f"{evaluation['clarity']['score']}/10")
@@ -176,13 +152,10 @@ elif st.session_state.status == 'complete':
         st.markdown(f"**Clarity:** {evaluation['clarity']['justification']}")
         st.markdown(f"**Correctness:** {evaluation['correctness']['justification']}")
         st.markdown(f"**Depth:** {evaluation['depth']['justification']}")
-
+        
         st.subheader("Overall Summary")
-        st.write(interview_doc.get("evaluation", {}).get("overall_summary", "No summary provided."))
+        st.info(summary)
     else:
-        st.error("Evaluation data not found.")
-
-    if st.button("Start New Interview"):
-        st.session_state.status = 'not_started'
-        st.session_state.interview_id = None
-        st.rerun()
+        st.error("Could not parse evaluation data.", icon="🚨")
+    
+    st.button("Start New Interview", on_click=start_new_interview)
