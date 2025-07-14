@@ -95,14 +95,16 @@ if st.session_state.status == 'setup':
 # --- SCREEN 2: LIVE INTERVIEW ---
 elif st.session_state.status == 'live_interview':
     st.header(f"Stage 2: Live Interview with {st.session_state.candidate_details['name']}")
-    st.info(f"**Instructions:** Start the recorder, suggest/rephrase questions as needed, and stop the recorder when the interview is done.")
+    st.info(f"**Instructions:** Start the recorder, conduct the interview, stop the recorder, then click 'Finish Interview & Evaluate'.")
     
     col1, col2 = st.columns([2, 3])
 
     with col1:
         st.subheader("Interview Recorder")
+        st.write("Click the microphone to start/stop recording.")
         audio_bytes = st_audiorec()
         if audio_bytes:
+            # Store the recorded audio bytes in the session state
             st.session_state.audio_bytes = audio_bytes
         
         st.subheader("Question Controls")
@@ -123,13 +125,21 @@ elif st.session_state.status == 'live_interview':
     with col2:
         st.subheader("Current Question & Notes")
         st.markdown(f"> **{st.session_state.current_question}**")
-        st.session_state.notes = st.text_area("Interviewer's Notes (for context during evaluation):", height=300, value=st.session_state.notes)
+        st.session_state.notes = st.text_area("Interviewer's Notes (for context during evaluation):", height=350, value=st.session_state.notes)
         
     st.markdown("---")
-    if st.session_state.audio_bytes:
-        if st.button("Finish Interview & Evaluate", type="primary"):
-            st.session_state.status = 'evaluating'
-            st.rerun()
+    
+    # --- THIS IS THE CORRECTED PART ---
+    # The button is now always visible but is disabled until audio is recorded.
+    st.button(
+        "Finish Interview & Evaluate",
+        type="primary",
+        disabled=(not st.session_state.audio_bytes),
+        on_click=lambda: st.session_state.update(status='evaluating')
+    )
+
+    if st.session_state.status == 'evaluating':
+        st.rerun()
 
 # --- SCREEN 3: EVALUATION & REPORT ---
 elif st.session_state.status in ['evaluating', 'report']:
