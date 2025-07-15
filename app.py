@@ -5,6 +5,7 @@ import traceback
 import unicodedata
 from st_audiorec import st_audiorec
 from fpdf import FPDF
+import textwrap
 
 # --- Page Configuration ---
 st.set_page_config(page_title="GenAI Interview Agent", page_icon="🤖", layout="wide")
@@ -22,29 +23,30 @@ def sanitize_text(text):
     text = str(text)
     return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
 
-def safe_text(text, max_length=100):
-    # Add breaks for long tokens
-    return ' '.join([t if len(t) < max_length else t[:max_length] + '…' for t in text.split()])
+def safe_wrap(text, width=80):
+    # Force wrapping long unbreakable words
+    text = sanitize_text(text)
+    return '\n'.join(textwrap.wrap(text, width=width, break_long_words=True, replace_whitespace=False))
 
 def create_pdf(details, report_data):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, f"Interview Report for: {sanitize_text(details['name'])}", 0, 1, 'C')
+    pdf.multi_cell(0, 10, safe_wrap(f"Interview Report for: {details['name']}"), align='C')
     pdf.ln(5)
     pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, f"Role Level: {details['role_level']} | Salary Expectation: {details['lpa']} LPA", 0, 1, 'C')
+    pdf.multi_cell(0, 10, safe_wrap(f"Role Level: {details['role_level']} | Salary Expectation: {details['lpa']} LPA"), align='C')
     pdf.ln(10)
 
     for i, item in enumerate(report_data):
         pdf.set_font("Arial", 'B', 12)
-        pdf.multi_cell(0, 5, safe_text(f"Question {i+1}: {sanitize_text(item['question'])}"))
+        pdf.multi_cell(0, 5, safe_wrap(f"Question {i+1}: {item['question']}"))
         pdf.ln(2)
 
         pdf.set_font("Arial", 'B', 11)
         pdf.multi_cell(0, 5, "Candidate's Answer:")
         pdf.set_font("Arial", 'I', 11)
-        pdf.multi_cell(0, 5, safe_text(sanitize_text(item.get('answer', 'N/A'))))
+        pdf.multi_cell(0, 5, safe_wrap(item.get('answer', 'N/A')))
         pdf.ln(2)
 
         pdf.set_font("Arial", 'B', 11)
@@ -53,16 +55,14 @@ def create_pdf(details, report_data):
 
         eval_data = item.get('evaluation', {}).get('evaluation', {})
         if eval_data:
-            clarity = eval_data.get('clarity', {})
-            correctness = eval_data.get('correctness', {})
-            depth = eval_data.get('depth', {})
-
-            pdf.multi_cell(0, 5, safe_text(f"  Clarity: {clarity.get('score', 0)}/10 - {sanitize_text(clarity.get('justification', ''))}"))
-            pdf.multi_cell(0, 5, safe_text(f"  Correctness: {correctness.get('score', 0)}/10 - {sanitize_text(correctness.get('justification', ''))}"))
-            pdf.multi_cell(0, 5, safe_text(f"  Depth: {depth.get('score', 0)}/10 - {sanitize_text(depth.get('justification', ''))}"))
+            for category in ['clarity', 'correctness', 'depth']:
+                section = eval_data.get(category, {})
+                score = section.get('score', 0)
+                justification = safe_wrap(section.get('justification', ''))
+                pdf.multi_cell(0, 5, f"  {category.capitalize()}: {score}/10 - {justification}")
 
         summary = item.get('evaluation', {}).get('overall_summary', 'N/A')
-        pdf.multi_cell(0, 5, safe_text(f"Summary: {sanitize_text(summary)}"))
+        pdf.multi_cell(0, 5, safe_wrap(f"Summary: {summary}"))
         pdf.ln(8)
 
     return pdf.output(dest='S').encode('latin-1')
