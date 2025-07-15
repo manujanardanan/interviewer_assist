@@ -187,7 +187,10 @@ elif st.session_state.status == 'recording':
         st.subheader("Audio Recorder")
         audio_bytes = st_audiorec()
         
-        if audio_bytes:
+        # --- THIS IS THE CORRECTED LOGIC ---
+        # We now check if the audio data is substantial (more than 1KB), not just if it exists.
+        # This ensures we only proceed AFTER the user clicks "Stop".
+        if audio_bytes and len(audio_bytes) > 1000:
             st.session_state.audio_bytes = audio_bytes
             st.session_state.status = 'processing'
             st.rerun()
