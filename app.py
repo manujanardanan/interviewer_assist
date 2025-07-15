@@ -5,6 +5,8 @@ import traceback
 import unicodedata
 from st_audiorec import st_audiorec
 from fpdf import FPDF
+import io
+from docx import Document
 
 # --- Page Configuration ---
 st.set_page_config(page_title="GenAI Interview Agent", page_icon="🤖", layout="wide")
@@ -110,6 +112,44 @@ def generate_question(role_level, question_number):
     if prompt:
         return get_ai_response(prompt)
     return "All questions have been asked."
+    
+def create_word_document(details, report_data):
+    """Generates a .docx file from the report data."""
+    document = Document()
+    document.add_heading(f"Interview Report for: {details['name']}", level=1)
+    document.add_paragraph(f"Role Level: {details['role_level']} | Salary Expectation: {details['lpa']} LPA")
+    document.add_paragraph() # Spacer
+
+    for i, item in enumerate(report_data):
+        document.add_heading(f"Question {i+1}: {item['question']}", level=2)
+        
+        p_answer = document.add_paragraph()
+        p_answer.add_run("Candidate's Answer: ").bold = True
+        p_answer.add_run(item.get('answer', 'N/A')).italic = True
+        
+        eval_data = item.get('evaluation', {})
+        summary = eval_data.get('overall_summary', 'No summary available.')
+        scores = eval_data.get('evaluation', {})
+        
+        p_eval = document.add_paragraph()
+        p_eval.add_run("Assessment/Evaluation: ").bold = True
+        p_eval.add_run(summary)
+        
+        clarity = scores.get('clarity', {}).get('score', 0)
+        correctness = scores.get('correctness', {}).get('score', 0)
+        depth = scores.get('depth', {}).get('score', 0)
+        avg_score = round((clarity + correctness + depth) / 3)
+
+        p_score = document.add_paragraph()
+        p_score.add_run("Score: ").bold = True
+        p_score.add_run(f"{avg_score}/10")
+        document.add_paragraph() # Spacer
+
+    # Save the document to an in-memory stream
+    doc_stream = io.BytesIO()
+    document.save(doc_stream)
+    doc_stream.seek(0)
+    return doc_stream
 
 # --- STAGE 1: SETUP ---
 if st.session_state.status == 'setup':
@@ -245,9 +285,9 @@ elif st.session_state.status in ['processing', 'transcript_confirmation']:
 
 # --- STAGE 5: FINAL REPORT ---
 elif st.session_state.status in ['evaluating', 'report']:
-    st.header(f"Stage 5: Final Report for {st.session_state.candidate_details['name']}")
+    st.header(f"Stage 5: Evaluation & Final Report")
     
-    # This block runs the evaluation pipeline once. The holistic summary part is removed.
+    # This block runs the evaluation pipeline once.
     if st.session_state.status == 'evaluating':
         report_data = []
         with st.spinner("Running detailed per-question evaluation..."):
@@ -272,9 +312,27 @@ elif st.session_state.status in ['evaluating', 'report']:
         st.session_state.status = 'report'
         st.rerun()
 
-    # This block displays the final report in the new, simplified format.
+    # This block displays the final report.
     if st.session_state.status == 'report':
-        st.subheader(f"Detailed Assessment")
+        st.subheader(f"Detailed Assessment for {st.session_state.candidate_details['name']}")
+
+        # --- NEW, TWO-STEP DOWNLOAD LOGIC ---
+        st.markdown("---")
+        st.write("To download the report, first generate the file, then click download.")
+        
+        if st.button("Generate Word Document"):
+            with st.spinner("Creating .docx file..."):
+                word_data = create_word_document(st.session_state.candidate_details, st.session_state.detailed_report)
+                st.session_state.word_data = word_data # Save the generated file in memory
+
+        if st.session_state.get("word_data"):
+            st.download_button(
+                label="⬇️ Download as Word (.docx)",
+                data=st.session_state.word_data,
+                file_name=f"Interview_Report_{st.session_state.candidate_details['name']}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        st.markdown("---")
         
         if st.session_state.detailed_report:
             for i, item in enumerate(st.session_state.detailed_report):
