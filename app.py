@@ -227,17 +227,27 @@ elif st.session_state.status == 'recording':
         st.subheader("Audio Recorder")
         audio_bytes = st_audiorec()
         
-        # --- THIS IS THE CORRECTED LOGIC ---
-        # We now check if the audio data is substantial (more than 1KB), not just if it exists.
-        # This ensures we only proceed AFTER the user clicks "Stop".
+        # This now only saves the audio to the session state when the recording is stopped.
+        # It does not automatically navigate away.
         if audio_bytes and len(audio_bytes) > 1000:
             st.session_state.audio_bytes = audio_bytes
-            st.session_state.status = 'processing'
-            st.rerun()
-    
+
     st.subheader("Interviewer's Notes")
     st.session_state.notes = st.text_area("Take live notes here:", height=200, value=st.session_state.notes)
+    
+    st.markdown("---")
 
+    # --- NEW: Confirmation and Navigation Logic ---
+    # This section now appears only AFTER audio has been recorded.
+    if st.session_state.audio_bytes:
+        # 1. Provide clear feedback that the recording is saved.
+        st.success("✅ Recording complete and saved.")
+        
+        # 2. Provide an explicit button to move to the next step.
+        if st.button("Proceed to Evaluation", type="primary"):
+            st.session_state.status = 'processing'
+            st.rerun()
+            
 # --- STAGE 4: PROCESSING & CONFIRMATION ---
 elif st.session_state.status in ['processing', 'transcript_confirmation']:
     if st.session_state.status == 'processing':
