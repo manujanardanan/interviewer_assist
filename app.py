@@ -225,7 +225,7 @@ elif st.session_state.status == 'recording':
     
     with col2:
         st.subheader("Audio Recorder")
-        audio_bytes = streamlit-audiorec()
+        audio_bytes = st_audiorec()
         
         # --- THIS IS THE CORRECTED LOGIC ---
         # We now check if the audio data is substantial (more than 1KB), not just if it exists.
