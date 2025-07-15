@@ -18,15 +18,15 @@ except Exception:
     st.stop()
 
 # --- PDF Generation Function ---
+def sanitize_text(text):
+    text = str(text)
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+
+def safe_text(text, max_length=100):
+    # Add breaks for long tokens
+    return ' '.join([t if len(t) < max_length else t[:max_length] + '…' for t in text.split()])
+
 def create_pdf(details, report_data):
-    # This new function provides the most robust way to clean text for PDF generation.
-    def sanitize_text(text):
-        import unicodedata
-        text = str(text)
-        # Normalize Unicode characters to their closest ASCII equivalent
-        # This handles a wide range of special characters, quotes, and accents
-        return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
@@ -38,74 +38,35 @@ def create_pdf(details, report_data):
 
     for i, item in enumerate(report_data):
         pdf.set_font("Arial", 'B', 12)
-        pdf.multi_cell(0, 5, f"Question {i+1}: {sanitize_text(item['question'])}")
+        pdf.multi_cell(0, 5, safe_text(f"Question {i+1}: {sanitize_text(item['question'])}"))
         pdf.ln(2)
-        
+
         pdf.set_font("Arial", 'B', 11)
         pdf.multi_cell(0, 5, "Candidate's Answer:")
         pdf.set_font("Arial", 'I', 11)
-        pdf.multi_cell(0, 5, f"{sanitize_text(item.get('answer', 'N/A'))}")
+        pdf.multi_cell(0, 5, safe_text(sanitize_text(item.get('answer', 'N/A'))))
         pdf.ln(2)
 
         pdf.set_font("Arial", 'B', 11)
         pdf.multi_cell(0, 5, "Evaluation:")
         pdf.set_font("Arial", '', 11)
-        
+
         eval_data = item.get('evaluation', {}).get('evaluation', {})
         if eval_data:
             clarity = eval_data.get('clarity', {})
             correctness = eval_data.get('correctness', {})
             depth = eval_data.get('depth', {})
-            pdf.multi_cell(0, 5, f"  Clarity: {clarity.get('score', 0)}/10 - {sanitize_text(clarity.get('justification', ''))}")
-            pdf.multi_cell(0, 5, f"  Correctness: {correctness.get('score', 0)}/10 - {sanitize_text(correctness.get('justification', ''))}")
-            pdf.multi_cell(0, 5, f"  Depth: {depth.get('score', 0)}/10 - {sanitize_text(depth.get('justification', ''))}")
-        
+
+            pdf.multi_cell(0, 5, safe_text(f"  Clarity: {clarity.get('score', 0)}/10 - {sanitize_text(clarity.get('justification', ''))}"))
+            pdf.multi_cell(0, 5, safe_text(f"  Correctness: {correctness.get('score', 0)}/10 - {sanitize_text(correctness.get('justification', ''))}"))
+            pdf.multi_cell(0, 5, safe_text(f"  Depth: {depth.get('score', 0)}/10 - {sanitize_text(depth.get('justification', ''))}"))
+
         summary = item.get('evaluation', {}).get('overall_summary', 'N/A')
-        pdf.multi_cell(0, 5, f"Summary: {sanitize_text(summary)}")
+        pdf.multi_cell(0, 5, safe_text(f"Summary: {sanitize_text(summary)}"))
         pdf.ln(8)
-    
-    # The output no longer needs to be manually encoded, as fpdf handles it.
+
     return pdf.output(dest='S').encode('latin-1')
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, f"Interview Report for: {sanitize_text(details['name'])}", 0, 1, 'C')
-    pdf.ln(5)
-    pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, f"Role Level: {details['role_level']} | Salary Expectation: {details['lpa']} LPA", 0, 1, 'C')
-    pdf.ln(10)
-
-    for i, item in enumerate(report_data):
-        pdf.set_font("Arial", 'B', 12)
-        pdf.multi_cell(0, 5, f"Question {i+1}: {sanitize_text(item['question'])}")
-        pdf.ln(2)
-        
-        pdf.set_font("Arial", 'B', 11)
-        pdf.multi_cell(0, 5, "Candidate's Answer:")
-        pdf.set_font("Arial", 'I', 11)
-        pdf.multi_cell(0, 5, f"{sanitize_text(item.get('answer', 'N/A'))}")
-        pdf.ln(2)
-
-        pdf.set_font("Arial", 'B', 11)
-        pdf.multi_cell(0, 5, "Evaluation:")
-        pdf.set_font("Arial", '', 11)
-        
-        eval_data = item.get('evaluation', {}).get('evaluation', {})
-        if eval_data:
-            clarity = eval_data.get('clarity', {})
-            correctness = eval_data.get('correctness', {})
-            depth = eval_data.get('depth', {})
-            pdf.multi_cell(0, 5, f"  Clarity: {clarity.get('score', 0)}/10 - {sanitize_text(clarity.get('justification', ''))}")
-            pdf.multi_cell(0, 5, f"  Correctness: {correctness.get('score', 0)}/10 - {sanitize_text(correctness.get('justification', ''))}")
-            pdf.multi_cell(0, 5, f"  Depth: {depth.get('score', 0)}/10 - {sanitize_text(depth.get('justification', ''))}")
-        
-        summary = item.get('evaluation', {}).get('overall_summary', 'N/A')
-        pdf.multi_cell(0, 5, f"Summary: {sanitize_text(summary)}")
-        pdf.ln(8)
     
-    return pdf.output(dest='S').encode('latin1')
-
 # --- Session State Initialization ---
 if 'status' not in st.session_state:
     st.session_state.status = 'setup'
