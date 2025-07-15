@@ -3,7 +3,7 @@ from openai import OpenAI
 import json
 import traceback
 import unicodedata
-from st_audiorec import st_audiorec
+from streamlit-audiorec import streamlit-audiorec
 from fpdf import FPDF
 import io
 from docx import Document
